@@ -2,7 +2,7 @@ import stratega
 import numpy as np
 import math
 from copy import deepcopy
-from testGraph import Graph
+from MCGSGraph import Graph
 
 
 class MinimizeDistanceHeuristic(stratega.MinimizeDistanceHeuristic):
