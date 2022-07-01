@@ -1,0 +1,3 @@
+[submodule "Stratega"]
+	path = Stratega
+	url = https://github.com/h-alkhorsan/Stratega.git
