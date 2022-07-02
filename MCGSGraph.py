@@ -1,7 +1,8 @@
 import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
-from networkx.drawing.nx_agraph import graphviz_layout
+from networkx.drawing.nx_agraph import pygraphviz_layout
+
 
 #Colors:
 # orange    -   standard
@@ -20,8 +21,8 @@ class Graph:
         #self.config = config
         self.frontier = []
 
-        # self.amplitude_factor = 0.2
-        # self.noisy_min_value = 0.0001
+        self.amplitude_factor = 0.2
+        self.noisy_min_value = 0.0001
 
         self.root_node = None
         self.new_nodes = []
@@ -50,25 +51,26 @@ class Graph:
         self.graph = nx.readwrite.read_gpickle(path)
 
     #def select_frontier_node(self, noisy, novelty_factor):
-    def select_frontier_node(self):
+    def select_frontier_node(self, noisy=True, novelty_factor=0.01):
 
         selectable_nodes = [x for x in self.frontier if x.unreachable is False]
         if len(selectable_nodes) == 0:
             return None
         else:
 
-            # if noisy:
-            #     amplitude = self.get_best_node(only_reachable=True).uct_value() * self.amplitude_factor
-            #     noise = self.random.normal(0, max(amplitude, self.noisy_min_value), len(selectable_nodes))
-            # else:
-            #     noise = 0
+            if noisy:
+                amplitude = self.get_best_node(only_reachable=True).uct_value() * self.amplitude_factor
+                noise = self.random.normal(0, max(amplitude, self.noisy_min_value), len(selectable_nodes))
+            else:
+                noise = 0
 
             best_node = selectable_nodes[0]
-            best_node_value = best_node.uct_value() #+ noise[0] + novelty_factor #* best_node.novelty_value
+            best_node_value = best_node.uct_value() + noise[0] + novelty_factor #* best_node.novelty_value
+
             for i, n in enumerate(selectable_nodes):
                 if n.uct_value()  > best_node_value:
                     best_node = n
-                    best_node_value = n.uct_value() #+ noise[i] + novelty_factor #* n.novelty_value
+                    best_node_value = n.uct_value() + noise[i] + novelty_factor #* n.novelty_value
 
             assert self.has_path(self.root_node, best_node)
             return best_node
@@ -210,17 +212,16 @@ class Graph:
     def draw_graph(self):
 
         nodes_info = nx.get_node_attributes(self.graph, 'info')
-       
         node_color_map = []
         node_size_map = []
         value_map = {}
 
         for node in nodes_info.values():
 
-            if (node.novelty_value == 0 and node.value() == 0) or node not in self.frontier:
+            if (node.value() == 0) or node not in self.frontier:
                 value_map[node.id] = ""
             else:
-                value_map[node.id] = str(round(node.novelty_value + node.value(), 2))
+                value_map[node.id] = str(round(node.value(), 2))
             node_size_map.append(30)
 
             if node == self.root_node:
@@ -270,7 +271,11 @@ class Graph:
             "arrowsize": 10,
         }
 
-        pos = graphviz_layout(self.graph, prog='neato')
+
+        H = nx.convert_node_labels_to_integers(self.graph, label_attribute="info")
+        H_layout = pygraphviz_layout(H, prog="neato")
+        G_layout = {H.nodes[n]["info"]: p for n, p in H_layout.items()}
+
 
         options = {}
         options.update(general_options)
@@ -280,13 +285,16 @@ class Graph:
         dpi = 96
         plt.figure(1, figsize=(1024/dpi, 768/dpi))
 
-        nx.draw(self.graph, pos, **options)
-        nx.draw_networkx_labels(self.graph, pos, value_map, font_size=8)
+        nx.draw(self.graph, G_layout, **options)
+        nx.draw_networkx_labels(self.graph, G_layout, value_map, font_size=8)
         plt.show()
 
     def save_graph(self, path):
         nx.readwrite.write_gpickle(self.graph, path + ".gpickle")
 
+    def write_graph(self, graph_object, path):
+        nx.write_graphml(graph_object, path)
+        
     def reroute_all(self):
         i = 0
         all_nodes = self.get_all_nodes_info()
