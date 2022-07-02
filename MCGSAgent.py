@@ -1,6 +1,7 @@
 import stratega
 import numpy as np
 import math
+import random
 from copy import deepcopy
 from MCGSGraph import Graph
 
@@ -83,7 +84,7 @@ class MCGSAgent(stratega.Agent):
     def init(self, gs, forward_model, timer):
         self.node_counter = 0
         self.edge_counter = 0
-        self.num_rollouts = 8
+        self.num_rollouts = 1
         self.rollout_depth = 10
         self.heuristic = MinimizeDistanceHeuristic()
 
@@ -150,22 +151,42 @@ class MCGSAgent(stratega.Agent):
     def get_observation(self, gs):
         return gs.print_board()
 
-    def compute_action(self, gs, forward_model, timer):
-        print(self.node_counter, self.edge_counter)
+    def compute_action(self, gs, forward_model, timer, draw_graph=True):
         self.reset_budget()
+        self.set_root_node(gs)
+        #actions = forward_model.generate_actions(gs, self.get_player_id())
 
-        actions = forward_model.generate_actions(gs, self.get_player_id())
         action = self.plan(gs, forward_model)
-        if action is None:
-            action_assignment = stratega.ActionAssignment.create_end_action_assignment(self.get_player_id())
-        else:
-            action_assignment = stratega.ActionAssignment.from_single_action(action)
-        #print(action_assignment)
+
+        action_assignment = stratega.ActionAssignment.from_single_action(action)
+                
+        if draw_graph:
+            self.graph.draw_graph()
+    
+
+
         return action_assignment
+        # if not action.validate(gs):
+        #     actions = forward_model.generate_actions(gs, self.get_player_id())
+        #     for action in actions:
+        #         print(action.validate(gs))
+        #     action = random.choice(actions)
+        #     action_assignment = stratega.ActionAssignment.from_single_action(action)
+        #     return action_assignment
+
+        # action_assignment = stratega.ActionAssignment.from_single_action(action)
+
+        # return action_assignment
+
+        # elif not action.validate(gs):
+        #     action_assignment = stratega.ActionAssignment.from_single_action(self.previous_actions[-1])
+        # else:
+        #     action_assignment = stratega.ActionAssignment.from_single_action(action)
+        # return action_assignment
         
 
-    def plan(self, gs, forward_model, draw_graph=False) -> int:
-        self.set_root_node(gs)
+    def plan(self, gs, forward_model) -> int:
+        #self.set_root_node(gs)
         self.graph.reroute_all()
 
         while not self.is_budget_over():
@@ -182,7 +203,7 @@ class MCGSAgent(stratega.Agent):
           
             for idx in range(len(children)):
     
-                #child_average_reward = self.rollout(actions_to_children[idx], selection_env, forward_model)
+                #child_average_reward = self.rollout_(actions_to_children[idx], selection_env, forward_model)
                 child_average_reward, novelties = self.sequential_simulation(actions_to_children[idx], selection_env, forward_model)
                 self.num_simulations += 1
 
@@ -198,9 +219,6 @@ class MCGSAgent(stratega.Agent):
         #assert action != None, "action is none"
         #action = self.get_optimal_action(self.root_node)
         
-        if draw_graph:
-            self.graph.draw_graph()
-
         return action
 
     def selection(self, env, forward_model):
@@ -225,10 +243,12 @@ class MCGSAgent(stratega.Agent):
 
         reached_destination = False
         while self.graph.has_path(node, destination_node) and not reached_destination:
-          
+            
             observations, actions = self.graph.get_path(node, destination_node)
   
             for idx, action in enumerate(actions):
+                # if action.validate(env) == False:
+                #     continue
 
                 previous_observation = self.get_observation(env)
                 parent_node = self.graph.get_node_info(previous_observation)
@@ -240,11 +260,11 @@ class MCGSAgent(stratega.Agent):
                 reward = self.evaluate_state(forward_model, env, self.get_player_id())
                 
                 #done = self.done(env)
-
+            
                 if not self.graph.has_node(current_observation):
                     self.add_new_observation(current_observation, parent_node, action, reward)
 
-                if not self.graph.has_edge_by_nodes(parent_node, self.graph.get_node_info(current_observation)):
+                elif not self.graph.has_edge_by_nodes(parent_node, self.graph.get_node_info(current_observation)):
                     self.add_edge(parent_node, self.graph.get_node_info(current_observation), action, reward)
 
                 if observations[idx + 1] != current_observation:
@@ -254,7 +274,9 @@ class MCGSAgent(stratega.Agent):
                 if destination_node.id == self.get_observation(env):
                     reached_destination = True
                     break
+       
 
+        #print("reached_destination", reached_destination)
         return self.graph.get_node_info(self.get_observation(env))
 
     def expansion(self, node, env, forward_model):
@@ -273,6 +295,9 @@ class MCGSAgent(stratega.Agent):
         actions = forward_model.generate_actions(env, self.get_player_id())
 
         for action in actions:
+            if action.validate(env) == False:
+                continue
+
             expansion_env = deepcopy(env)
 
             forward_model.advance_gamestate(expansion_env, action)
@@ -294,29 +319,29 @@ class MCGSAgent(stratega.Agent):
         return new_nodes, actions_to_new_nodes
 
 
-    # def rollout(self, action_to_node, gs, forward_model):
-    #     # TODO:
-    #     # remove actions tried from previous rollouts
-    #     rewards = []
-    #     tried_actions = []
+    def rollout_(self, action_to_node, gs, forward_model):
+        # TODO:
+        # remove actions tried from previous rollouts
+        rewards = []
+        tried_actions = []
 
-    #     for i in range(self.num_rollouts):
-    #         while not self.is_game_over(gs):
-    #             actions = forward_model.generate_actions(gs, self.get_player_id())
-    #             if len(actions) == 0:
-    #                 break
-    #             random_action = self.random.choice(actions)
-    #             forward_model.advance_gamestate(gs, random_action)
-    #             self.forward_model_calls += 1
+        for i in range(self.num_rollouts):
+            while not self.is_game_over(gs):
+                actions = forward_model.generate_actions(gs, self.get_player_id())
+                if len(actions) == 0:
+                    break
+                random_action = self.random.choice(actions)
+                forward_model.advance_gamestate(gs, random_action)
+                self.forward_model_calls += 1
 
-    #             reward = self.evaluate_state(forward_model, gs, self.get_player_id())
-    #             rewards.append(reward)
-    #     return np.mean(rewards)
+                reward = self.evaluate_state(forward_model, gs, self.get_player_id())
+                rewards.append(reward)
+        return np.mean(rewards)
 
     def sequential_simulation(self, action_to_node, env, forward_model):
         rewards = []
         paths = []
-      
+
         for i in range(self.num_rollouts):
             
             #disabled_actions = []
@@ -352,6 +377,9 @@ class MCGSAgent(stratega.Agent):
         previous_observation = self.get_observation(rollout_env)
 
         for idx, action in enumerate(action_list):
+            if action.validate(rollout_env) == False:
+                continue
+
             end_action = action.create_end_action(self.get_player_id(), action.get_action_type())
             #print(end_action)
             forward_model.advance_gamestate(rollout_env, end_action)
@@ -371,7 +399,7 @@ class MCGSAgent(stratega.Agent):
         return cum_reward, path
 
     def back_propagation(self, node, reward):
-
+    
         while node is not None:
             node.visits += 1
             node.total_value += reward 
@@ -421,15 +449,14 @@ class MCGSAgent(stratega.Agent):
                          action=action, reward=reward, visits=0)
             self.add_node(child)
             new_node = child 
-            assert new_node != None, "new node is none"
 
         else:
             child = self.graph.get_node_info(current_observation)
-            assert child != None, "child is none"
+
             new_node = child 
         
         edge = self.add_edge(parent_node, child, action, reward)
-        assert new_node != None, "2 new node is none"
+
         
         return new_node, reward 
 
@@ -453,7 +480,7 @@ class MCGSAgent(stratega.Agent):
         old_root_node = self.root_node
         #new_root_id = self.get_observation(self.gs)
         new_root_id = self.get_observation(gs)
-        print(self.graph.has_node(new_root_id))
+
         self.root_node = self.graph.get_node_info(new_root_id)
 
         self.graph.set_root_node(self.root_node)
@@ -467,6 +494,8 @@ class MCGSAgent(stratega.Agent):
                 self.graph.reroute_path(self.root_node, old_root_node)
                 old_root_node.action = self.graph.get_edge_info(old_root_node.parent, old_root_node).action
 
+    
+
     def select_best_step(self, node, closest=False):
 
         best_node = None
@@ -476,8 +505,10 @@ class MCGSAgent(stratega.Agent):
         if best_node is None:
             best_node = self.graph.get_best_node(only_reachable=True)
 
+                
         if best_node is None:
-            return self.root_node, None  # if there is no reachable node, use root (6 - no action)
+            return self.root_node, self.root_node.action
+            #return self.root_node, None  # if there is no reachable node, use root (6 - no action)
 
 
         while best_node.parent != self.root_node:
@@ -604,13 +635,13 @@ if __name__ == '__main__':
     
     number_of_games = 5
     player_count = 2
-    seed = 0
+    seed = 42
 
-    runner = stratega.create_runner(config)
-    resolution = stratega.Vector2i(1920, 1080)
-    runner.play([MCGSAgent(seed=seed), "MCTSAgent"], resolution, 0)
-    #arena = stratega.create_arena(config)
-    #arena.run_games(player_count, seed, number_of_games, 1, [MCGSAgent(seed=seed), "DoNothingAgent"])
+    #runner = stratega.create_runner(config)
+    #resolution = stratega.Vector2i(1920, 1080)
+    #runner.play([MCGSAgent(seed=seed), "MCTSAgent"], resolution, 0)
+    arena = stratega.create_arena(config)
+    arena.run_games(player_count, seed, number_of_games, 1, [MCGSAgent(seed=seed), "DoNothingAgent"])
 
 
 
