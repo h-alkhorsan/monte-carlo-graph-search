@@ -2,23 +2,13 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 from networkx.drawing.nx_agraph import pygraphviz_layout
-
-
-#Colors:
-# orange    -   standard
-# red       -   frontier
-# blue      -   root
-# cyan      -   previous roots
-# green     -   done
-# black     -   unreachable
-
+from matplotlib.lines import Line2D
 
 class Graph:
 
     def __init__(self, seed):
 
         self.graph = nx.DiGraph()
-        #self.config = config
         self.frontier = []
 
         self.amplitude_factor = 0.2
@@ -51,7 +41,7 @@ class Graph:
         self.graph = nx.readwrite.read_gpickle(path)
 
     #def select_frontier_node(self, noisy, novelty_factor):
-    def select_frontier_node(self, noisy=True, novelty_factor=0.01):
+    def select_frontier_node(self, noisy=False, novelty_factor=0.01):
 
         selectable_nodes = [x for x in self.frontier if x.unreachable is False]
         if len(selectable_nodes) == 0:
@@ -65,12 +55,13 @@ class Graph:
                 noise = 0
 
             best_node = selectable_nodes[0]
+      
             best_node_value = best_node.uct_value() + noise[0] + novelty_factor #* best_node.novelty_value
-
             for i, n in enumerate(selectable_nodes):
                 if n.uct_value()  > best_node_value:
                     best_node = n
                     best_node_value = n.uct_value() + noise[i] + novelty_factor #* n.novelty_value
+       
 
             assert self.has_path(self.root_node, best_node)
             return best_node
@@ -109,11 +100,7 @@ class Graph:
         return nx.has_path(self.graph, node_from.id, node_to.id)
 
     def get_node_info(self, id):
-        try:
-            return self.graph.nodes[id]["info"]
-        except KeyError:
-            print("key error")
-            print(self.graph.nodes[id]["info"])
+        return self.graph.nodes[id]["info"]
 
     def get_all_nodes_info(self):
         return list(nx.get_node_attributes(self.graph, 'info').values())
@@ -154,8 +141,8 @@ class Graph:
 
     def get_closest_done_node(self, only_reachable=False):
 
-        #selectable_nodes = [x for x in self.get_all_nodes_info() if x.done and x.unreachable is False]
-        selectable_nodes = [x for x in self.get_all_nodes_info() if x.unreachable is False]
+        selectable_nodes = [x for x in self.get_all_nodes_info() if x.done and x.unreachable is False]
+        #selectable_nodes = [x for x in self.get_all_nodes_info() if x.unreachable is False]
         if only_reachable:
             selectable_nodes = [x for x in selectable_nodes if x.unreachable is False]
 
@@ -222,6 +209,7 @@ class Graph:
                 value_map[node.id] = ""
             else:
                 value_map[node.id] = str(round(node.value(), 2))
+
             node_size_map.append(30)
 
             if node == self.root_node:
@@ -232,12 +220,15 @@ class Graph:
                 node_color_map.append('grey')
             elif node in self.new_nodes:
                 node_color_map.append('pink')
-            # elif node.done:
-            #     node_color_map.append('green')
+            elif node.done:
+                node_color_map.append('green')
             elif node in self.frontier:
                 node_color_map.append('red')
             else:
+                # not chosen, is reachable, not in new nodes, not done, not in frontier
                 node_color_map.append('orange')
+
+
 
         edges_info = nx.get_edge_attributes(self.graph, 'info')
         edge_color_map = []
@@ -271,11 +262,9 @@ class Graph:
             "arrowsize": 10,
         }
 
-
         H = nx.convert_node_labels_to_integers(self.graph, label_attribute="info")
         H_layout = pygraphviz_layout(H, prog="neato")
         G_layout = {H.nodes[n]["info"]: p for n, p in H_layout.items()}
-
 
         options = {}
         options.update(general_options)
@@ -284,10 +273,15 @@ class Graph:
 
         dpi = 96
         plt.figure(1, figsize=(1024/dpi, 768/dpi))
-
-        nx.draw(self.graph, G_layout, **options)
+        nx.draw_networkx(self.graph, G_layout, **options)
         nx.draw_networkx_labels(self.graph, G_layout, value_map, font_size=8)
+        handles = [Line2D([], [], color=color, label=label, marker='o')
+           for color, label in zip(["blue", "lightblue", "grey", "pink", "green", "red", "orange"], 
+                                   ["root", "previous roots", "unreachable", "new nodes", "done", "frontier", "other"])]
+
+        plt.legend(handles=handles)
         plt.show()
+
 
     def save_graph(self, path):
         nx.readwrite.write_gpickle(self.graph, path + ".gpickle")
