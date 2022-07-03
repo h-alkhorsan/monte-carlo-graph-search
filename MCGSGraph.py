@@ -40,7 +40,7 @@ class Graph:
     def load_graph(self, path):
         self.graph = nx.readwrite.read_gpickle(path)
 
-    #def select_frontier_node(self, noisy, novelty_factor):
+    # ****only use novelty factor when measuring node novelty
     def select_frontier_node(self, noisy=False, novelty_factor=0.01):
 
         selectable_nodes = [x for x in self.frontier if x.unreachable is False]
@@ -140,9 +140,7 @@ class Graph:
         return best_node
 
     def get_closest_done_node(self, only_reachable=False):
-
-        selectable_nodes = [x for x in self.get_all_nodes_info() if x.done and x.unreachable is False]
-        #selectable_nodes = [x for x in self.get_all_nodes_info() if x.unreachable is False]
+        selectable_nodes = [x for x in self.get_all_nodes_info() if x.unreachable is False]
         if only_reachable:
             selectable_nodes = [x for x in selectable_nodes if x.unreachable is False]
 
