@@ -120,15 +120,23 @@ class MCGSAgent(stratega.Agent):
         action = self.plan(gs, forward_model)
 
         print(action.get_action_name(), 
-            action.validate(gs), 
-            action.get_action_flag(), 
-            action.get_action_type_id(), 
-            action.get_owner_id(), 
-            action.get_source_id(),
-            action.is_entity_action(),
-            action.is_player_action()
-
+            action.validate(gs),
         )
+
+        actions = forward_model.generate_actions(gs, self.get_player_id())
+        
+        if action.validate(gs) == False:
+            print(action.get_action_type_id())
+            print(len(actions))
+            for action in actions:
+                print(action.get_action_type_id())
+        #     print("my action\n", action.get_action_type_id(), action.get_source_id())
+        #     print("available actions", len(actions))
+        #     for action in actions:
+        #         print(action.get_action_type_id(), action.get_source_id())
+
+        #     #assert False
+
         action_assignment = stratega.ActionAssignment.from_single_action(action)
                 
         if draw_graph:
@@ -190,19 +198,26 @@ class MCGSAgent(stratega.Agent):
         node = self.graph.get_node_info(observation)
 
         reached_destination = False
+
         while self.graph.has_path(node, destination_node) and not reached_destination:
             
             observations, actions = self.graph.get_path(node, destination_node)
-  
-            for idx, action in enumerate(actions):
-                # problem
+            for action in actions:
                 if action.validate(env) == False:
-                    assert False, "failed action in go to node"
+                    continue
+            
+            for idx, action in enumerate(actions):
+
+                # problem
+                # if action.validate(env) == False:
+                #     print("failed action go to node")
+                    #continue
+                    #assert False, "failed action in go to node"
 
 
                 previous_observation = self.get_observation(env)
                 parent_node = self.graph.get_node_info(previous_observation)
-
+                
                 forward_model.advance_gamestate(env, action)
                 self.forward_model_calls += 1
 
@@ -210,7 +225,6 @@ class MCGSAgent(stratega.Agent):
                 reward = self.evaluate_state(forward_model, env, self.get_player_id())
                 
          
-            
                 if not self.graph.has_node(current_observation):
                     self.add_new_observation(current_observation, parent_node, action, reward)
 
@@ -292,6 +306,7 @@ class MCGSAgent(stratega.Agent):
 
         for idx, action in enumerate(action_list):
             if action.validate(rollout_env) == False:
+                #print("")
                 #assert False, "failed action in rollout"
                 continue
  
@@ -356,7 +371,13 @@ class MCGSAgent(stratega.Agent):
 
         new_root_id = self.get_observation(gs)
 
-        self.root_node = self.graph.get_node_info(new_root_id)
+#        assert self.graph.has_node(new_root_id), "not found in graph"
+        if not self.graph.has_node(new_root_id):
+            self.root_node = Node(id = self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0)
+            self.add_node(self.root_node)
+
+        else:
+            self.root_node = self.graph.get_node_info(new_root_id)
 
         self.graph.set_root_node(self.root_node)
 
@@ -528,6 +549,7 @@ class Edge:
 if __name__ == '__main__':
     
     #config = stratega.load_config('Stratega/resources/gameConfigurations/TBS/Original/KillTheKing.yaml')
+    #config = stratega.load_config('Stratega/resources/gameConfigurations/TBS/Tests/KillTheKingActions.yaml')
     config = stratega.load_config('Stratega/resources/gameConfigurations/TBS/Tests/OpenTheDoor.yaml')
  
     log_path = './sgaLog.yaml'
@@ -544,9 +566,9 @@ if __name__ == '__main__':
     runner.play([MCGSAgent(seed=seed), "MCTSAgent"], resolution, 0)
     #runner.play(["MCTSAgent", "CombatAgent"], resolution, 0)
 
-    arena = stratega.create_arena(config)
+    #arena = stratega.create_arena(config)
     #arena.run_games(player_count, seed, number_of_games, 1, [MCGSAgent(seed=seed), "MCTSAgent"])
-    #arena.run_games(player_count, seed, number_of_games, 1, ["MCTSAgent", "CombatAgent"])
+    #arena.run_games(player_count, seed, number_of_games, 1, ["MCTSAgent", "DoNothingAgent"])
 
 
 
