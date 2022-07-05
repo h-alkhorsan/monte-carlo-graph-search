@@ -203,10 +203,10 @@ class Graph:
 
         for node in nodes_info.values():
 
-            if (node.value() == 0) or node not in self.frontier:
-                value_map[node.id] = ""
-            else:
-                value_map[node.id] = str(round(node.value(), 2))
+            # if (node.value() == 0) or node not in self.frontier:
+            #     value_map[node.id] = ""
+            # else:
+            #     value_map[node.id] = str(round(node.value(), 2))
 
             node_size_map.append(30)
 
