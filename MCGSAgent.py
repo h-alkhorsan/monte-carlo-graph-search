@@ -79,6 +79,7 @@ class MCGSAgent(stratega.Agent):
         possible_actions = forward_model.generate_actions(gs, self.get_player_id())
        
         if len(possible_actions) == 1:
+            #print("only one action available")
             return stratega.ActionAssignment.from_single_action(possible_actions[0])
 
         action = self.plan(gs, forward_model)
@@ -94,24 +95,6 @@ class MCGSAgent(stratega.Agent):
 
         return action_assignment
 
-    def set_root_node(self, gs):
-        old_root_node = self.root_node
-        new_root_id = self.get_observation(gs)
-        if not self.graph.has_node(new_root_id):
-            self.root_node = Node(id = self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0)
-            self.add_node(self.root_node)
-
-        self.root_node = self.graph.get_node_info(new_root_id)
-        self.graph.set_root_node(self.root_node)
-
-        if self.root_node.id != old_root_node.id:
-            self.root_node.chosen = True
-            self.root_node.parent = None
-
-            # Reroute the old root node
-            if self.graph.has_path(self.root_node, old_root_node):
-                self.graph.reroute_path(self.root_node, old_root_node)
-                old_root_node.action = self.graph.get_edge_info(old_root_node.parent, old_root_node).action
 
     def plan(self, gs, forward_model): 
         self.set_root_node(gs)
@@ -149,7 +132,6 @@ class MCGSAgent(stratega.Agent):
         return selected_node
 
     def go_to_node(self, destination_node, env, forward_model): 
-
 
         observation = self.get_observation(env)
         node = self.graph.get_node_info(observation)
@@ -194,7 +176,6 @@ class MCGSAgent(stratega.Agent):
         new_nodes = []
         actions_to_new_nodes = []
 
-        # Nodes might not be leaves due to action_failure
         if node.is_leaf:
             node.is_leaf = False
             self.graph.remove_from_frontier(node)
@@ -202,20 +183,15 @@ class MCGSAgent(stratega.Agent):
         actions = forward_model.generate_actions(env, self.get_player_id())
 
         for action in actions:
-            if action.validate(env) == False:
-                assert False, "failed action in expansion"
-
 
             expansion_env = deepcopy(env)
 
             forward_model.advance_gamestate(expansion_env, action)
             self.forward_model_calls += 1
             reward = self.evaluate_state(forward_model, expansion_env, self.get_player_id())
-         
           
             current_observation = self.get_observation(expansion_env)
             child, reward = self.add_new_observation(current_observation, node, action, reward)
-        
 
             if child is not None:
   
@@ -265,6 +241,7 @@ class MCGSAgent(stratega.Agent):
             # random opponent model
             if self.use_opponent_model:
                 rollout_env.set_current_tbs_player(self.get_opponent_id())
+
                 opponent_actions = forward_model.generate_actions(rollout_env, self.get_opponent_id())
                 random_opponent_action = self.random.choice(opponent_actions)
                 forward_model.advance_gamestate(rollout_env, random_opponent_action)
@@ -281,12 +258,30 @@ class MCGSAgent(stratega.Agent):
             node.total_value += reward 
             node = node.parent
 
+    def set_root_node(self, gs):
+        old_root_node = self.root_node
+        new_root_id = self.get_observation(gs)
+        if not self.graph.has_node(new_root_id):
+            self.root_node = Node(id = self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0)
+            self.add_node(self.root_node)
+
+        self.root_node = self.graph.get_node_info(new_root_id)
+        self.graph.set_root_node(self.root_node)
+
+        if self.root_node.id != old_root_node.id:
+            self.root_node.chosen = True
+            self.root_node.parent = None
+
+            if self.graph.has_path(self.root_node, old_root_node):
+                self.graph.reroute_path(self.root_node, old_root_node)
+                old_root_node.action = self.graph.get_edge_info(old_root_node.parent, old_root_node).action
+
     def add_new_observation(self, current_observation, parent_node, action, reward):
 
         new_node = None
 
-        if current_observation != parent_node.id:  # don't add node if nothing has changed in the observation
-            if self.graph.has_node(current_observation) is False:  # if the node is new, create it and add to the graph
+        if current_observation != parent_node.id:  
+            if self.graph.has_node(current_observation) is False:  
                 child = Node(id=current_observation, parent=parent_node,
                              is_leaf=True, action=action, reward=reward, visits=0)
                 self.add_node(child)
@@ -294,11 +289,10 @@ class MCGSAgent(stratega.Agent):
             else:
                 child = self.graph.get_node_info(current_observation)
 
-                if child.is_leaf: #enable for FMC optimisation, comment for full exploration
+                if child.is_leaf: # enable for FMC optimisation, comment for full exploration
                     new_node = child
 
             self.add_edge(parent_node, child, action, reward)
-            #edge = self.add_edge(parent_node, child, action, reward)
    
         return new_node, reward
     
@@ -314,7 +308,7 @@ class MCGSAgent(stratega.Agent):
         while best_node.parent != self.root_node:
             best_node = best_node.parent
 
-        edge = self.graph.get_edge_info(node, best_node)  # pick the edge between children
+        edge = self.graph.get_edge_info(node, best_node)  
 
         return best_node, edge.action
 
@@ -336,67 +330,12 @@ class MCGSAgent(stratega.Agent):
             self.edge_counter += 1
 
            
-        if child_node.unreachable is True and child_node != self.root_node:  # if child was unreachable make it reachable through this parent
+        if child_node.unreachable is True and child_node != self.root_node:  
             child_node.set_parent(parent_node)
             child_node.action = action
             child_node.unreachable = False
 
         return edge
-
-##########################################################################################
-############################### REDUNDANT CODE ###########################################
-##########################################################################################
-
-    # def check_paths(self):
-    #     self.graph.reroute_paths(self.root_node)
-
-
-
-    # def add_novelties_to_graph(self, paths):
-
-    #     nodes = []
-    #     node_rewards = []
-    #     for path in paths:
-    #         for idx, step in enumerate(path):
-
-    #             observation = step[1]
-    #             if self.graph.has_node(observation) is False:
-
-    #                 for i in range(idx + 1):
-    #                     step_i = path[i]
-    #                     previous_observation = step_i[0]
-    #                     current_observation = step_i[1]
-    #                     action = step_i[2]
-    #                     reward = step_i[3]
-                        
-    #                     parent_node = self.graph.get_node_info(previous_observation)
-    #                     if parent_node.unreachable and parent_node != self.root_node:
-    #                         print("No way novelty!")
-    #                         assert False
-    #                     node, node_reward = self.add_new_observation(current_observation, parent_node, action, reward)
-    #                     nodes.append(node)
-    #                     node_rewards.append(node_reward)
-
-                 
-    #     return nodes, node_rewards
-
-
-    # def get_optimal_action(self, node):
-
-    #     new_root_node, action = self.select_best_step(node)
-    #     new_root_node.chosen = True
-    #     new_root_node.parent = None
-
-    #     if self.graph.has_path(new_root_node, self.root_node):
-    #         self.graph.reroute_path(new_root_node, self.root_node)
-    #         self.root_node.action = self.graph.get_edge_info(self.root_node.parent, self.root_node).action
-
-    #     self.root_node = new_root_node
-
-    #     return action
-##########################################################################################
-##########################################################################################
-
 
 class Node:
 

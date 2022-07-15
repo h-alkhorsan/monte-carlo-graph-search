@@ -33,12 +33,13 @@ if __name__ == '__main__':
 
     # resolution = stratega.Vector2i(1920, 1080)
     # runner = stratega.create_runner(config)
-    # runner.play([MCGSAgent(seed=seed), RandomAgent(seed=seed)], resolution, seed)
 
-    # gs = runner.get_gamestate()
-    # print(gs.get_winner_id())
+    # # #runner.play([MCGSAgent(seed=seed), RandomAgent(seed=seed)], resolution, seed)
+    # runner.play([MCTSAgent(seed=seed), "MCTSAgent"], resolution, seed)
 
 
     arena = stratega.create_arena(config)
-    arena.run_games(player_count, seed, number_of_games, 1, [MCGSAgent(seed=seed), RandomAgent(seed=seed)])
+
+    #arena.run_games(player_count, seed, number_of_games, 1, [MCGSAgent(seed=seed), "MCTSAgent"])
+    arena.run_games(player_count, seed, number_of_games, 1, [MCTSAgent(seed=seed), "MCTSAgent"])
 
