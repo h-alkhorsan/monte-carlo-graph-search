@@ -3,37 +3,34 @@ import numpy as np
 import math
 from copy import deepcopy
 from MCTSGraph import Graph
-
-
-class MinimizeDistanceHeuristic(stratega.MinimizeDistanceHeuristic):
-    def __init__(self):
-        stratega.MinimizeDistanceHeuristic.__init__(self)
-
-class Timer(stratega.Timer):
-    def __init__(self):
-        stratega.Timer.__init__(self)
+from utils import Timer 
+from heuristics import *
+from opponent_models import *
 
 class MCTSAgent(stratega.Agent):
 
     def __init__(self, seed, budget_type="MAX_FM_CALLS"):
         stratega.Agent.__init__(self, "MCTSAgent")
-        self.random = np.random.RandomState(seed)
-        self.graph = Graph()
+        self.seed = seed 
         self.budget_type = budget_type
 
     def init(self, gs, forward_model, timer):
+        print("init MCTSAgent")
+        self.random = np.random.RandomState(self.seed)
+        self.graph = Graph()
         self.node_counter = 0
         self.edge_counter = 0
         self.num_rollouts = 8
-        self.rollout_depth = 50
 
-        self.root_node = Node(id=self.get_observation(gs), parent=None, is_leaf=True, value=0, visits=0, done=False)
+        self.use_opponent_model = True 
+        observation = self.get_observation(gs)
+        self.root_node = Node(id=self.node_counter, observation=observation, parent=None, is_leaf=True, value=0, visits=0, redundant=False)
         self.add_node(self.root_node)
         self.root_node.chosen = True 
  
         self.num_simulations = 0
         self.forward_model_calls = 0        
-        self.max_forward_model_calls = 1000
+        self.max_forward_model_calls = 3000
 
         self.num_iterations = 0
         self.max_iterations = 100
@@ -41,7 +38,8 @@ class MCTSAgent(stratega.Agent):
         self.timer = Timer()
         self.max_time_ms = 1000
 
-        self.heuristic = MinimizeDistanceHeuristic()
+        #self.heuristic = MinimizeDistanceHeuristic()
+        self.heuristic = GeneralHeuristic(gs)
 
 
     def is_budget_over(self):
@@ -59,7 +57,6 @@ class MCTSAgent(stratega.Agent):
         self.num_iterations = 0
         self.timer = Timer()
 
-
     def evaluate_state(self, forward_model, gs, player_id):
         return self.heuristic.evaluate_gamestate(forward_model, gs, player_id)    
 
@@ -69,15 +66,25 @@ class MCTSAgent(stratega.Agent):
     def get_observation(self, gs):
         return gs.print_board()
 
+    def get_opponent_id(self):
+        if self.get_player_id() == 0:
+            return 1
+        else:
+            return 0
+
     def compute_action(self, gs, forward_model, timer, draw_graph=False):
         self.reset_budget()
-        
+        possible_actions = forward_model.generate_actions(gs, self.get_player_id())
+
+        if len(possible_actions) == 1:
+            #print("only one action available")
+            return stratega.ActionAssignment.from_single_action(possible_actions[0])
+
         action = self.plan(gs, forward_model)
             
         if action.validate(gs) == False:
                 print("invalid action... ending turn")
-                end_action_assignment = stratega.ActionAssignment.create_end_action_assignment(self.get_player_id())
-                return end_action_assignment
+                action = possible_actions[-1]
 
         action_assignment = stratega.ActionAssignment.from_single_action(action)
                 
@@ -89,6 +96,7 @@ class MCTSAgent(stratega.Agent):
 
     
     def plan(self, gs, forward_model): 
+        
         while not self.is_budget_over():
 
             selection_env = deepcopy(gs)
@@ -100,10 +108,9 @@ class MCTSAgent(stratega.Agent):
                 value = self.simulation(child, selection_env, forward_model)
                 self.back_propagation(child, value)
 
-                
             self.num_iterations += 1
 
-        action = self.get_optimal_action(self.root_node)
+        action = self.get_best_action(self.root_node)
        
         return action
 
@@ -111,7 +118,8 @@ class MCTSAgent(stratega.Agent):
     def selection(self, node, env, forward_model):
         while not node.is_leaf:
             node, action = self.select_child(node)
-            forward_model.advance_famestate(env, action)
+            forward_model.advance_gamestate(env, action)
+            self.forward_model_calls += 1
         return node 
 
     def expansion(self, node, env, forward_model):
@@ -120,18 +128,16 @@ class MCTSAgent(stratega.Agent):
 
         actions = forward_model.generate_actions(env, self.get_player_id())
         for action in actions:
-            if action.validate(env) == False:
-                print("invalid action in expansion")
-                continue
+
             expansion_env = deepcopy(env)
             forward_model.advance_gamestate(expansion_env, action)
             self.forward_model_calls += 1
             reward = self.evaluate_state(forward_model, env, self.get_player_id())
-            done = self.is_game_over(expansion_env)
+           
             observation = self.get_observation(expansion_env)
-
-            child = Node(id=observation, parent=node, is_leaf=True, value=0, visits=0, done=done)
-            edge = Edge(id=self.edge_counter, node_from=node, node_to=child, action=action, reward=reward, done=done)
+        
+            child = Node(id=self.node_counter, observation=observation, parent=node, is_leaf=True, value=0, visits=0, redundant=self.graph.has_observation(observation))
+            edge = Edge(id=self.edge_counter, node_from=node, node_to=child, action=action, reward=reward)
 
             self.node_counter += 1
             self.edge_counter += 1
@@ -147,31 +153,47 @@ class MCTSAgent(stratega.Agent):
     def simulation(self, node, env, forward_model):
         rewards = []
         action = self.graph.get_edge_info(node.parent, node).action
+        simulation_env = deepcopy(env)
+        forward_model.advance_gamestate(simulation_env, action)
+
         for i in range(self.num_rollouts):
-            actions = forward_model.generate_actions(env, self.get_player_id())
-            action_list = self.random.choice(actions, self.rollout_depth)
-            average_reward = self.rollout(action, env, action_list, forward_model)
+            average_reward = self.rollout(simulation_env, forward_model)
             rewards.append(average_reward)
+
         return np.mean(rewards)
 
-    def rollout(self, action, env, action_list, forward_model):
+    def rollout(self, env, forward_model):
         cum_reward = 0
         rollout_env = deepcopy(env)
-        forward_model.advance_gamestate(rollout_env, action)
-        self.forward_model_calls += 1
 
-        for action in action_list:
-            if action.validate(rollout_env) == False:
-                #print("invalid action in rollout")
-                continue
-            forward_model.advance_gamestate(rollout_env, action)
-            self.forward_model_calls += 1
-            reward = self.evaluate_state(forward_model, rollout_env, self.get_player_id()) 
-            done = self.is_game_over(rollout_env)
-
-            cum_reward += reward
-            if done:
+        while True:
+            actions = forward_model.generate_actions(rollout_env, self.get_player_id())
+            
+            if len(actions) == 0:
                 break 
+
+            if self.is_budget_over():
+                break 
+
+            if self.is_game_over(rollout_env):
+                break 
+
+            random_action = self.random.choice(actions)
+            forward_model.advance_gamestate(rollout_env, random_action)
+            self.forward_model_calls += 1
+            reward = self.evaluate_state(forward_model, rollout_env, self.get_player_id())
+            cum_reward += reward 
+
+            # random opponent model
+            if self.use_opponent_model:
+                rollout_env.set_current_tbs_player(self.get_opponent_id())
+
+                opponent_actions = forward_model.generate_actions(rollout_env, self.get_opponent_id())
+                random_opponent_action = self.random.choice(opponent_actions)
+                forward_model.advance_gamestate(rollout_env, random_opponent_action)
+                #self.forward_model_calls += 1
+
+                rollout_env.set_current_tbs_player(self.get_player_id())
 
         return cum_reward
 
@@ -184,7 +206,7 @@ class MCTSAgent(stratega.Agent):
                 break 
             node = node.parent
 
-    def get_optimal_action(self, node):
+    def get_best_action(self, node):
         new_root_node, action = self.select_child(node)
         new_root_node.chosen = True 
         self.root_node = new_root_node
@@ -211,15 +233,15 @@ class MCTSAgent(stratega.Agent):
 
 class Node:
 
-    def __init__(self, id, parent, is_leaf, value, visits, done):
+    def __init__(self, id, observation, parent, is_leaf, value, visits, redundant):
 
         self.id = id
+        self.observation = observation
         self.parent = parent
         self.value = value
         self.visits = visits
         self.is_leaf = is_leaf
-        #self.novelty_value = novelty_value
-        self.done = done
+        self.redundant = redundant
 
         self.chosen = False
         self.unreachable = False
@@ -236,34 +258,14 @@ class Node:
 
 class Edge:
 
-    def __init__(self, id, node_from, node_to, action, reward, done):
+    def __init__(self, id, node_from, node_to, action, reward):
         self.id = id
         self.node_from = node_from
         self.node_to = node_to
         self.action = action
         self.reward = reward
-        self.done = done
 
     def __hash__(self):
         return hash(self.id)
 
 
-
-if __name__ == '__main__':
-    
-    config = stratega.load_config('Stratega/resources/gameConfigurations/TBS/Original/KillTheKing.yaml')
-    #config = stratega.load_config('Stratega/resources/gameConfigurations/TBS/Tests/OpenTheDoor.yaml')
- 
-    log_path = './sgaLog.yaml'
-    stratega.set_default_logger(log_path)
-    
-    number_of_games = 5
-    player_count = 2
-    seed = 42
-
-    resolution = stratega.Vector2i(1920, 1080)
-    runner = stratega.create_runner(config)
-    runner.play([MCTSAgent(seed=seed), "MCTSAgent"], resolution, seed)
-
-   # arena = stratega.create_arena(config)
-   # arena.run_games(player_count, seed, number_of_games, 1, [MCTSAgent(seed=seed), "MCTSAgent"])
