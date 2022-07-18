@@ -6,6 +6,15 @@ from MCGSGraph import Graph
 from utils import Timer
 from heuristics import *
 
+'''
+Current problems:
+    1. The invalid actions are caused when there are no selectable nodes in the frontier
+    when this happens, we return the root node and the root node action might not be valid at that state
+
+    We need to find a better way to select nodes rather than maintaining a frontier
+
+'''
+
 class MCGSAgent(stratega.Agent):
 
     def __init__(self, seed, budget_type="MAX_FM_CALLS"):
@@ -20,8 +29,8 @@ class MCGSAgent(stratega.Agent):
         self.node_counter = 0
         self.edge_counter = 0
         self.num_rollouts = 8
-        self.use_opponent_model = True 
 
+        self.use_opponent_model = True 
         self.root_node = Node(id=self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0)
         self.add_node(self.root_node)
         self.root_node.chosen = True 
@@ -39,10 +48,7 @@ class MCGSAgent(stratega.Agent):
         #self.heuristic = MinimizeDistanceHeuristic()
         #self.heuristic = RelativeStrengthHeuristic(gs)
         self.heuristic = GeneralHeuristic(gs)
-        
         #self.budget_type = config['budget_type']
-
-      
 
     def is_budget_over(self):
         if self.budget_type == "MAX_FM_CALLS":
@@ -125,6 +131,8 @@ class MCGSAgent(stratega.Agent):
             return self.root_node
 
         node = self.graph.select_frontier_node()
+
+        # found the problem
         if node is None:
             return self.root_node
 
@@ -132,6 +140,9 @@ class MCGSAgent(stratega.Agent):
         return selected_node
 
     def go_to_node(self, destination_node, env, forward_model): 
+        
+        # temp_env = deepcopy(env)
+        # observation = self.get_observation(temp_env)
 
         observation = self.get_observation(env)
         node = self.graph.get_node_info(observation)
@@ -144,6 +155,7 @@ class MCGSAgent(stratega.Agent):
 
             for idx, action in enumerate(actions):
 
+                # temp_env = deepcopy(env)
                 previous_observation = self.get_observation(env)
                 parent_node = self.graph.get_node_info(previous_observation)
                 
@@ -151,7 +163,6 @@ class MCGSAgent(stratega.Agent):
                 self.forward_model_calls += 1
                 reward = self.evaluate_state(forward_model, env, self.get_player_id())
                
-
                 current_observation = self.get_observation(env)
                 
                 if not self.graph.has_node(current_observation):
@@ -162,17 +173,19 @@ class MCGSAgent(stratega.Agent):
 
                 if observations[idx + 1] != current_observation:
                     node = self.graph.get_node_info(current_observation)
+                    print("early break")
                     break
               
-                if destination_node.id == self.get_observation(env):
+                if self.get_observation(env) == destination_node.id:
                     reached_destination = True
                     break
-       
+
+
         return self.graph.get_node_info(self.get_observation(env))
+      
 
     def expansion(self, node, env, forward_model):
 
-     
         new_nodes = []
         actions_to_new_nodes = []
 
@@ -194,7 +207,6 @@ class MCGSAgent(stratega.Agent):
             child, reward = self.add_new_observation(current_observation, node, action, reward)
 
             if child is not None:
-  
                 new_nodes.append(child)
                 actions_to_new_nodes.append(action)
 
@@ -208,7 +220,6 @@ class MCGSAgent(stratega.Agent):
         self.forward_model_calls += 1    
 
         for i in range(self.num_rollouts):
-            
             average_reward = self.rollout(simulation_env, forward_model)
             rewards.append(average_reward)
 
@@ -216,7 +227,6 @@ class MCGSAgent(stratega.Agent):
 
    
     def rollout(self, env, forward_model):
-    
         cum_reward = 0
         rollout_env = deepcopy(env)
 
@@ -252,18 +262,19 @@ class MCGSAgent(stratega.Agent):
         return cum_reward
 
     def back_propagation(self, node, reward):
-    
         while node is not None:
             node.visits += 1
             node.total_value += reward 
             node = node.parent
 
+    ###### CHECK THIS ###########
     def set_root_node(self, gs):
         old_root_node = self.root_node
         new_root_id = self.get_observation(gs)
-        if not self.graph.has_node(new_root_id):
-            self.root_node = Node(id = self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0)
-            self.add_node(self.root_node)
+        
+        # if not self.graph.has_node(new_root_id):
+        #     self.root_node = Node(id = self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0)
+        #     self.add_node(self.root_node)
 
         self.root_node = self.graph.get_node_info(new_root_id)
         self.graph.set_root_node(self.root_node)
@@ -289,8 +300,8 @@ class MCGSAgent(stratega.Agent):
             else:
                 child = self.graph.get_node_info(current_observation)
 
-                if child.is_leaf: # enable for FMC optimisation, comment for full exploration
-                    new_node = child
+                # if child.is_leaf: # enable for FMC optimisation, comment for full exploration
+                #     new_node = child
 
             self.add_edge(parent_node, child, action, reward)
    
@@ -301,7 +312,6 @@ class MCGSAgent(stratega.Agent):
 
         best_node = self.graph.get_best_node()
 
-                
         if best_node is None:
             return self.root_node, self.root_node.action
 

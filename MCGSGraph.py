@@ -33,11 +33,11 @@ class Graph:
     def in_frontier(self, node):
         return node in self.frontier
 
-   
     def select_frontier_node(self):
 
         selectable_nodes = [x for x in self.frontier if x.unreachable is False]
         if len(selectable_nodes) == 0:
+            print("no selectable nodes")
             return None
  
         amplitude = self.get_best_node().uct_value() * self.amplitude_factor
@@ -51,7 +51,7 @@ class Graph:
                 best_node = n
                 best_node_value = n.uct_value() + noise[i] 
        
-        assert self.has_path(self.root_node, best_node)
+        assert self.has_path(self.root_node, best_node), "no path to best node"
 
         return best_node
 
@@ -121,6 +121,13 @@ class Graph:
 
     def has_edge_by_nodes(self, node_from, node_to):
         return self.graph.has_edge(node_from, node_to)
+
+    def get_children(self, node):
+        children = []
+        for n in self.graph.successors(node.id):
+            child_node = self.graph.nodes[n]['info']
+            children.append(child_node)
+        return children
 
     def get_edge_info(self, parent, child):
         return self.graph.get_edge_data(parent.id, child.id)['info']
