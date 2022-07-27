@@ -1,18 +1,21 @@
 import stratega
 import numpy as np
 import math
+import csv
 from copy import deepcopy
 from MCTSGraph import Graph
 from utils import Timer 
-from heuristics import *
+from stratega_heuristics import *
 from opponent_models import *
 
 class MCTSAgent(stratega.Agent):
 
-    def __init__(self, seed, budget_type="MAX_FM_CALLS"):
+    def __init__(self, seed, budget_type=None, game_type=None, opponent_name=None):
         stratega.Agent.__init__(self, "MCTSAgent")
         self.seed = seed 
         self.budget_type = budget_type
+        self.game_type = game_type
+        self.opponent_name = opponent_name
 
     def init(self, gs, forward_model, timer):
         print("init MCTSAgent")
@@ -21,24 +24,25 @@ class MCTSAgent(stratega.Agent):
         self.node_counter = 0
         self.edge_counter = 0
         self.num_rollouts = 8
+        self.invalid_action_count = 0
+        self.n_turns = 0
 
         self.use_opponent_model = True 
         observation = self.get_observation(gs)
-        self.root_node = Node(id=self.node_counter, observation=observation, parent=None, is_leaf=True, value=0, visits=0, redundant=False)
+        self.root_node = Node(id=self.node_counter, observation=observation, parent=None, is_leaf=True, value=0, visits=0, redundant=False, is_root=True)
         self.add_node(self.root_node)
         self.root_node.chosen = True 
  
         self.num_simulations = 0
         self.forward_model_calls = 0        
-        self.max_forward_model_calls = 3000
+        self.max_forward_model_calls = 1000
 
         self.num_iterations = 0
         self.max_iterations = 100
 
         self.timer = Timer()
-        self.max_time_ms = 1000
+        self.max_time_ms = 10000
 
-        #self.heuristic = MinimizeDistanceHeuristic()
         self.heuristic = GeneralHeuristic(gs)
 
 
@@ -72,24 +76,58 @@ class MCTSAgent(stratega.Agent):
         else:
             return 0
 
-    def compute_action(self, gs, forward_model, timer, draw_graph=False):
+    def get_similar_action(self, failed_action, possible_actions):
+        similar_action = None
+        for action in possible_actions:
+            if action.get_action_name() == failed_action.get_action_name():
+                similar_action = action 
+
+        if similar_action == None:
+            similar_action = possible_actions[-1]
+
+        return similar_action
+
+    def log(self):
+        data = [
+            self.seed,
+            self.game_type, 
+            self.forward_model_calls,
+            self.num_iterations,
+            self.node_counter,
+            self.invalid_action_count,
+            self.n_turns,
+            self.opponent_name,
+            int(self.use_opponent_model),
+            self.heuristic.__str__(),
+        ]
+
+        with open(f'experiments/seed_{self.seed}_MCTS.csv', 'a', encoding='UTF8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(data)
+
+    def compute_action(self, gs, forward_model, timer, draw_graph=True, log_data=False):
+        print("MCTS Action")
+        self.n_turns += 1
         self.reset_budget()
         possible_actions = forward_model.generate_actions(gs, self.get_player_id())
 
         if len(possible_actions) == 1:
-            #print("only one action available")
             return stratega.ActionAssignment.from_single_action(possible_actions[0])
 
         action = self.plan(gs, forward_model)
             
         if action.validate(gs) == False:
-                print("invalid action... ending turn")
-                action = possible_actions[-1]
+            self.invalid_action_count += 1
+            print("MCTS: invalid action...")
+            action = self.get_similar_action(action, possible_actions)
 
         action_assignment = stratega.ActionAssignment.from_single_action(action)
                 
         if draw_graph:
             self.graph.draw_graph()
+
+        if log_data:
+            self.log()
 
         return action_assignment
 
@@ -136,7 +174,7 @@ class MCTSAgent(stratega.Agent):
            
             observation = self.get_observation(expansion_env)
         
-            child = Node(id=self.node_counter, observation=observation, parent=node, is_leaf=True, value=0, visits=0, redundant=self.graph.has_observation(observation))
+            child = Node(id=self.node_counter, observation=observation, parent=node, is_leaf=True, value=0, visits=0, redundant=self.graph.has_observation(observation), is_root=False)
             edge = Edge(id=self.edge_counter, node_from=node, node_to=child, action=action, reward=reward)
 
             self.node_counter += 1
@@ -191,7 +229,7 @@ class MCTSAgent(stratega.Agent):
                 opponent_actions = forward_model.generate_actions(rollout_env, self.get_opponent_id())
                 random_opponent_action = self.random.choice(opponent_actions)
                 forward_model.advance_gamestate(rollout_env, random_opponent_action)
-                #self.forward_model_calls += 1
+                self.forward_model_calls += 1
 
                 rollout_env.set_current_tbs_player(self.get_player_id())
 
@@ -207,8 +245,12 @@ class MCTSAgent(stratega.Agent):
             node = node.parent
 
     def get_best_action(self, node):
+        self.root_node.is_root = False 
+        
         new_root_node, action = self.select_child(node)
         new_root_node.chosen = True 
+        new_root_node.is_root = True
+         
         self.root_node = new_root_node
         return action
 
@@ -217,10 +259,6 @@ class MCTSAgent(stratega.Agent):
 
     def select_child(self, node):
         children = self.graph.get_children(node)
-    
-        edges = []
-        for child in children:
-            edges.append(self.graph.get_edge_info(node, child))
 
         child_values = [child.uct_value() for child in children]
     
@@ -233,7 +271,7 @@ class MCTSAgent(stratega.Agent):
 
 class Node:
 
-    def __init__(self, id, observation, parent, is_leaf, value, visits, redundant):
+    def __init__(self, id, observation, parent, is_leaf, value, visits, redundant, is_root):
 
         self.id = id
         self.observation = observation
@@ -242,14 +280,16 @@ class Node:
         self.visits = visits
         self.is_leaf = is_leaf
         self.redundant = redundant
+        self.is_root = is_root
 
         self.chosen = False
         self.unreachable = False
+        
 
     def uct_value(self):
-        c = 1 / math.sqrt(2)
+        ucb_const = 1 / math.sqrt(2)
         mean = self.value / self.visits
-        ucb = c * math.sqrt(math.log(self.parent.visits if self.parent is not None else 1 + 1) / self.visits)
+        ucb = ucb_const * math.sqrt(math.log(self.parent.visits if self.parent is not None else 1 + 1) / self.visits)
         return mean + ucb
 
     def __hash__(self):

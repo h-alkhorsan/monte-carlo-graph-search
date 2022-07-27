@@ -1,10 +1,12 @@
 import stratega
 import numpy as np
 import math
+import csv
 from copy import deepcopy
 from MCGSGraph import Graph
 from utils import Timer
-from heuristics import *
+from stratega_heuristics import *
+from opponent_models import *
 
 '''
 Current problems:
@@ -17,10 +19,12 @@ Current problems:
 
 class MCGSAgent(stratega.Agent):
 
-    def __init__(self, seed, budget_type="MAX_FM_CALLS"):
+    def __init__(self, seed, budget_type=None, game_type=None, opponent_name=None):
         stratega.Agent.__init__(self, "MCGSAgent")
         self.seed = seed 
         self.budget_type = budget_type
+        self.game_type = game_type
+        self.opponent_name = opponent_name
 
     def init(self, gs, forward_model, timer):
         print("init MCGSAgent")
@@ -29,9 +33,11 @@ class MCGSAgent(stratega.Agent):
         self.node_counter = 0
         self.edge_counter = 0
         self.num_rollouts = 8
+        self.invalid_action_count = 0
+        self.n_turns = 0
 
         self.use_opponent_model = True 
-        self.root_node = Node(id=self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0)
+        self.root_node = Node(id=self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0, is_root=True)
         self.add_node(self.root_node)
         self.root_node.chosen = True 
  
@@ -43,12 +49,10 @@ class MCGSAgent(stratega.Agent):
         self.max_iterations = 100
 
         self.timer = Timer()
-        self.max_time_ms = 1000
+        self.max_time_ms = 10000
 
-        #self.heuristic = MinimizeDistanceHeuristic()
-        #self.heuristic = RelativeStrengthHeuristic(gs)
         self.heuristic = GeneralHeuristic(gs)
-        #self.budget_type = config['budget_type']
+
 
     def is_budget_over(self):
         if self.budget_type == "MAX_FM_CALLS":
@@ -59,6 +63,7 @@ class MCGSAgent(stratega.Agent):
             return self.timer.elapsed_milliseconds() >= self.max_time_ms
         else:
             return False 
+
 
     def reset_budget(self):
         self.forward_model_calls = 0
@@ -80,24 +85,66 @@ class MCGSAgent(stratega.Agent):
         else:
             return 0
 
-    def compute_action(self, gs, forward_model, timer, draw_graph=False):
+    def get_similar_action(self, failed_action, possible_actions):
+        similar_action = None 
+        for action in possible_actions:
+            if action.get_action_name() == failed_action.get_action_name():
+                similar_action = action 
+
+        if similar_action == None:
+            similar_action = possible_actions[-1]
+
+        return similar_action
+
+    def log(self):
+        data = [
+            self.seed,
+            self.game_type,
+            self.forward_model_calls,
+            self.num_iterations,
+            self.node_counter,
+            self.invalid_action_count,
+            self.n_turns, 
+            self.opponent_name,
+            int(self.use_opponent_model),
+            self.heuristic.__str__()
+        ]
+
+        with open(f'experiments/seed_{self.seed}_MCGS.csv', 'a', encoding='UTF8', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(data)
+
+
+    def compute_action(self, gs, forward_model, timer, draw_graph=True, log_data=False):
+        print("MCGS Action")
+        self.n_turns += 1
         self.reset_budget()
         possible_actions = forward_model.generate_actions(gs, self.get_player_id())
        
         if len(possible_actions) == 1:
-            #print("only one action available")
             return stratega.ActionAssignment.from_single_action(possible_actions[0])
 
         action = self.plan(gs, forward_model)
-            
+
         if action.validate(gs) == False:
-                print("invalid action... ending turn")
-                action = possible_actions[-1]
+            '''
+            The best thing we can do currently is return the most similar action instead
+            otherwise the game will crash if agent keeps returning end action
+            '''
+            self.invalid_action_count += 1
+            print("MCGS: invalid action... ")
+            action = self.get_similar_action(action, possible_actions)
+            
 
         action_assignment = stratega.ActionAssignment.from_single_action(action)
                 
         if draw_graph:
+       
+
             self.graph.draw_graph()
+
+        if log_data:
+            self.log()
 
         return action_assignment
 
@@ -122,7 +169,6 @@ class MCGSAgent(stratega.Agent):
             self.num_iterations += 1
 
         best_node, action = self.select_best_node(self.root_node)
-       
         return action
 
     def selection(self, env, forward_model):
@@ -141,9 +187,6 @@ class MCGSAgent(stratega.Agent):
 
     def go_to_node(self, destination_node, env, forward_model): 
         
-        # temp_env = deepcopy(env)
-        # observation = self.get_observation(temp_env)
-
         observation = self.get_observation(env)
         node = self.graph.get_node_info(observation)
 
@@ -155,7 +198,6 @@ class MCGSAgent(stratega.Agent):
 
             for idx, action in enumerate(actions):
 
-                # temp_env = deepcopy(env)
                 previous_observation = self.get_observation(env)
                 parent_node = self.graph.get_node_info(previous_observation)
                 
@@ -173,7 +215,6 @@ class MCGSAgent(stratega.Agent):
 
                 if observations[idx + 1] != current_observation:
                     node = self.graph.get_node_info(current_observation)
-                    print("early break")
                     break
               
                 if self.get_observation(env) == destination_node.id:
@@ -204,7 +245,7 @@ class MCGSAgent(stratega.Agent):
             reward = self.evaluate_state(forward_model, expansion_env, self.get_player_id())
           
             current_observation = self.get_observation(expansion_env)
-            child, reward = self.add_new_observation(current_observation, node, action, reward)
+            child = self.add_new_observation(current_observation, node, action, reward)
 
             if child is not None:
                 new_nodes.append(child)
@@ -251,12 +292,10 @@ class MCGSAgent(stratega.Agent):
             # random opponent model
             if self.use_opponent_model:
                 rollout_env.set_current_tbs_player(self.get_opponent_id())
-
                 opponent_actions = forward_model.generate_actions(rollout_env, self.get_opponent_id())
                 random_opponent_action = self.random.choice(opponent_actions)
                 forward_model.advance_gamestate(rollout_env, random_opponent_action)
-                #self.forward_model_calls += 1
-
+                self.forward_model_calls += 1
                 rollout_env.set_current_tbs_player(self.get_player_id())
        
         return cum_reward
@@ -267,16 +306,19 @@ class MCGSAgent(stratega.Agent):
             node.total_value += reward 
             node = node.parent
 
-    ###### CHECK THIS ###########
     def set_root_node(self, gs):
         old_root_node = self.root_node
-        new_root_id = self.get_observation(gs)
-        
-        # if not self.graph.has_node(new_root_id):
-        #     self.root_node = Node(id = self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0)
-        #     self.add_node(self.root_node)
+        old_root_node.is_root = False 
 
-        self.root_node = self.graph.get_node_info(new_root_id)
+        new_root_id = self.get_observation(gs)
+
+        if not self.graph.has_node(new_root_id):
+            self.root_node = Node(id=self.get_observation(gs), parent=None, is_leaf=True, action=None, reward=0, visits=0, is_root=True)
+            self.add_node(self.root_node)
+        else:
+            self.root_node = self.graph.get_node_info(new_root_id)
+            self.root_node.is_root = True 
+
         self.graph.set_root_node(self.root_node)
 
         if self.root_node.id != old_root_node.id:
@@ -289,24 +331,15 @@ class MCGSAgent(stratega.Agent):
 
     def add_new_observation(self, current_observation, parent_node, action, reward):
 
-        new_node = None
+        if not self.graph.has_node(current_observation):
+            child = Node(id=current_observation, parent=parent_node, is_leaf=True, action=action, reward=reward, visits=0, is_root=False)
+            self.add_node(child)
 
-        if current_observation != parent_node.id:  
-            if self.graph.has_node(current_observation) is False:  
-                child = Node(id=current_observation, parent=parent_node,
-                             is_leaf=True, action=action, reward=reward, visits=0)
-                self.add_node(child)
-                new_node = child
-            else:
-                child = self.graph.get_node_info(current_observation)
+        else:
+            child = self.graph.get_node_info(current_observation)
 
-                # if child.is_leaf: # enable for FMC optimisation, comment for full exploration
-                #     new_node = child
-
-            self.add_edge(parent_node, child, action, reward)
-   
-        return new_node, reward
-    
+        self.add_edge(parent_node, child, action, reward)
+        return child 
 
     def select_best_node(self, node):
 
@@ -321,6 +354,8 @@ class MCGSAgent(stratega.Agent):
         edge = self.graph.get_edge_info(node, best_node)  
 
         return best_node, edge.action
+
+
 
 
     def add_node(self, node):
@@ -339,7 +374,6 @@ class MCGSAgent(stratega.Agent):
             self.graph.add_edge(edge)
             self.edge_counter += 1
 
-           
         if child_node.unreachable is True and child_node != self.root_node:  
             child_node.set_parent(parent_node)
             child_node.action = action
@@ -349,7 +383,7 @@ class MCGSAgent(stratega.Agent):
 
 class Node:
 
-    def __init__(self, id, parent, is_leaf, action, reward, visits):
+    def __init__(self, id, parent, is_leaf, action, reward, visits, is_root):
 
         self.id = id
         self.parent = None
@@ -359,21 +393,19 @@ class Node:
         self.total_value = reward
         self.visits = visits
         self.is_leaf = is_leaf
+        self.is_root = is_root
 
         self.chosen = False
         self.unreachable = False
 
     def uct_value(self):
-        c = 1 / math.sqrt(2)
-        ucb = c * math.sqrt(math.log(self.parent.visits + 1) / self.visits)
+        ucb_const = 1 / math.sqrt(2)
+        ucb = ucb_const * math.sqrt(math.log(self.parent.visits + 1) / self.visits)
         return self.value() + ucb
 
     def value(self):
-        if self.visits == 0:
-            return 0
-        else:
-            return self.total_value / self.visits
-
+        return self.total_value / self.visits if self.visits > 0 else 0 
+        
     def trajectory_from_root(self):
 
         action_trajectory = []

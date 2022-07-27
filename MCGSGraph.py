@@ -4,8 +4,7 @@ import matplotlib.pyplot as plt
 from networkx.drawing.nx_agraph import pygraphviz_layout
 from matplotlib.lines import Line2D
 
-class Graph:
-
+class Graph: 
     def __init__(self, seed):
         self.graph = nx.DiGraph()
         self.frontier = []
@@ -37,7 +36,6 @@ class Graph:
 
         selectable_nodes = [x for x in self.frontier if x.unreachable is False]
         if len(selectable_nodes) == 0:
-            print("no selectable nodes")
             return None
  
         amplitude = self.get_best_node().uct_value() * self.amplitude_factor
@@ -90,7 +88,6 @@ class Graph:
         return list(nx.get_node_attributes(self.graph, 'info').values())
 
     def get_best_node(self):
-
         nodes = self.get_all_nodes_info()
         nodes.remove(self.root_node)
 
@@ -99,15 +96,16 @@ class Graph:
         if len(selectable_nodes) > 0:
             best_node = selectable_nodes[0]
             best_node_value = best_node.value() + self.get_edge_info(best_node.parent, best_node).reward
+
+            for n in selectable_nodes:
+                selected_node_value = n.value() + self.get_edge_info(n.parent, n).reward
+                if best_node_value < selected_node_value:
+                    best_node = n
+                    best_node_value = selected_node_value
         else:
             best_node = None
             best_node_value = None
 
-        for n in selectable_nodes:
-            selected_node_value = n.value() + self.get_edge_info(n.parent, n).reward
-            if best_node_value < selected_node_value:
-                best_node = n
-                best_node_value = selected_node_value
 
         return best_node
 
@@ -159,7 +157,7 @@ class Graph:
                     queue.append(child)
 
     def draw_graph(self):
-
+        self.graph.remove_edges_from(nx.selfloop_edges(self.graph))
         nodes_info = nx.get_node_attributes(self.graph, 'info')
         node_color_map = []
         node_size_map = []
@@ -170,7 +168,7 @@ class Graph:
 
             node_size_map.append(30)
 
-            if node == self.root_node:
+            if node.is_root:
                 node_color_map.append('blue')
 
             elif node.chosen:
@@ -178,16 +176,15 @@ class Graph:
 
             elif node.unreachable:
                 node_color_map.append('grey')
-
-            elif node in self.frontier and node not in self.new_nodes:
-                node_color_map.append('green')
-
+            
             elif node in self.new_nodes:
                 node_color_map.append('pink')
-                
+
+            elif node in self.frontier:
+                node_color_map.append('green')
+
             else:
                 node_color_map.append('black')
-
 
         edges_info = nx.get_edge_attributes(self.graph, 'info')
         edge_color_map = []

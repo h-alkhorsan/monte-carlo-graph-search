@@ -48,7 +48,7 @@ class Graph:
    
             node_size_map.append(30)
 
-            if node == self.root_node:
+            if node.is_root:
                 node_color_map.append('blue')
 
             elif node.chosen:
@@ -56,16 +56,15 @@ class Graph:
 
             elif node.redundant:
                 node_color_map.append('grey')
-
-            elif node.is_leaf and node not in self.new_nodes:
-                node_color_map.append('green')
-                
+            
             elif node in self.new_nodes:
                 node_color_map.append('pink')
 
+            elif node.is_leaf:
+                node_color_map.append('green')
+                
             else:
                 node_color_map.append('black')
-
     
         edges_info = nx.get_edge_attributes(self.graph, 'info')
     
